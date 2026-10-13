@@ -53,7 +53,7 @@ class DataController(BaseController):
         async with aiofiles.open(file_path , "wb") as f:
             while chunk := await file.read(self.app_settings.CHUNK_SIZE):
                 await f.write(chunk) 
-        return file_name
+        return file_name , file_path
 
     def generate_unique_file_name(self , original_file_name: str):
         # generate unique file name 

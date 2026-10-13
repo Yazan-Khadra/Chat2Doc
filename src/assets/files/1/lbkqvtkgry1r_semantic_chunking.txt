@@ -1,0 +1,266 @@
+# Building Production-Grade RAG Systems
+
+## 1. Introduction
+
+Retrieval-Augmented Generation, commonly known as RAG, is an architecture that combines information retrieval with large language models. Instead of requiring a language model to answer every question using only the information encoded in its parameters, a RAG system retrieves relevant information from an external knowledge source and provides that information to the model as contextual evidence.
+
+The basic idea is simple. A user asks a question, the system searches a collection of documents, relevant passages are retrieved, and a language model generates an answer based on those passages. In practice, however, production-quality RAG systems are considerably more complex. The quality of the final answer depends not only on the language model but also on document processing, chunking, embeddings, indexing, retrieval, reranking, context construction, and evaluation.
+
+A useful way to think about a RAG system is as a sequence of transformations. An unstructured document is first converted into clean text. The text is then divided into meaningful units. Each unit is represented numerically and stored in a retrieval index. When a user submits a query, the system transforms the query into one or more retrieval representations, searches the index, evaluates candidate passages, and finally provides selected evidence to the language model.
+
+This architecture creates an important engineering principle: improving the language model alone does not necessarily improve the entire RAG system. If relevant information is destroyed during document preprocessing or divided incorrectly during chunking, even a highly capable model may fail to answer a question correctly.
+
+---
+
+# 2. Document Ingestion
+
+Document ingestion is the first stage of the pipeline. Its responsibility is to convert source material into a representation that can be processed by downstream components.
+
+A production RAG system may receive documents from many different sources. These can include PDF files, Markdown files, HTML pages, Word documents, CSV files, database records, internal knowledge bases, or content retrieved through APIs.
+
+Different formats introduce different problems. Markdown usually preserves headings and paragraphs naturally, while PDF extraction can destroy reading order. HTML may contain navigation menus, advertisements, scripts, and duplicated content that should not become part of the knowledge base.
+
+For this reason, ingestion should not be treated as a simple file-reading operation. The ingestion layer should identify the document type, select an appropriate parser, preserve useful metadata, and produce a normalized internal representation.
+
+## 2.1 Preserving Document Structure
+
+Document structure is valuable information.
+
+Consider a technical document containing the following hierarchy:
+
+* Machine Learning
+
+  * Supervised Learning
+
+    * Linear Regression
+    * Logistic Regression
+  * Unsupervised Learning
+
+    * Clustering
+
+If the extraction process removes all headings and produces one continuous sequence of sentences, downstream components lose information about the relationships between sections.
+
+A better representation preserves headings, paragraphs, lists, tables, captions, and page information whenever possible.
+
+For example, the following structure should remain recognizable:
+
+## Machine Learning
+
+Machine learning enables computers to learn patterns from data.
+
+### Supervised Learning
+
+Supervised learning uses labeled examples to learn a mapping between inputs and outputs.
+
+### Unsupervised Learning
+
+Unsupervised learning attempts to discover structure in data without explicit labels.
+
+The headings provide semantic context. A paragraph describing regression becomes easier to interpret when the system knows that the paragraph belongs to the supervised-learning section.
+
+## 2.2 Removing Extraction Noise
+
+Document extraction frequently introduces noise that does not belong to the original content.
+
+Typical examples include repeated page headers, page numbers, footer text, watermarks, duplicated paragraphs, broken words, and unnecessary whitespace.
+
+For example, a PDF parser might produce:
+
+Machine learn-
+ing models can
+learn patterns
+from data.
+
+A preprocessing stage should reconstruct the sentence:
+
+Machine learning models can learn patterns from data.
+
+However, preprocessing should be conservative. Not every hyphen indicates a broken word. Expressions such as state-of-the-art, real-time, and model-based should remain unchanged.
+
+The goal is not to rewrite the author's text. The goal is to restore the semantic information that existed in the original document.
+
+---
+
+# 3. Sentence Segmentation
+
+Sentence segmentation is particularly important for semantic chunking.
+
+A semantic chunker commonly begins by identifying individual sentences. Those sentences are then represented using embeddings and compared with neighboring sentences.
+
+Consider this passage:
+
+Python is widely used for data analysis. It provides a large ecosystem of numerical and machine learning libraries. Pandas is commonly used for tabular data processing.
+
+A sentence-based representation might be:
+
+Sentence 1: Python is widely used for data analysis.
+
+Sentence 2: It provides a large ecosystem of numerical and machine learning libraries.
+
+Sentence 3: Pandas is commonly used for tabular data processing.
+
+The semantic chunker can then compare the relationships between these units.
+
+Poor sentence segmentation can create serious problems. If a sentence is accidentally split in the middle, the embedding model receives incomplete information. If several independent sentences are merged together, semantic boundaries become harder to detect.
+
+Abbreviations also require attention. A naive period-based splitter may incorrectly divide:
+
+Dr. Smith developed the architecture.
+
+into:
+
+Dr.
+
+Smith developed the architecture.
+
+This creates an artificial semantic boundary that did not exist in the source document.
+
+---
+
+# 4. Semantic Chunking
+
+Chunking determines how a document is divided into retrieval units. The objective is not simply to produce pieces of equal size. A useful chunk should contain information that belongs together semantically and should be sufficiently complete to answer questions about its topic.
+
+Traditional character-based chunking might create a new chunk after a fixed number of characters. This approach is predictable and computationally inexpensive, but the resulting boundary may occur in the middle of an explanation.
+
+Semantic chunking takes a different approach. It examines the meaning of neighboring sentences and attempts to identify points where the semantic content changes.
+
+For example:
+
+Python is a general-purpose programming language.
+
+It was created by Guido van Rossum and first released in the early 1990s.
+
+Python is widely used in web development, automation, and data science.
+
+Machine learning models learn patterns from examples.
+
+Neural networks are one of the most important model families used in modern machine learning.
+
+The first three sentences form a coherent discussion of Python. The fourth sentence shifts toward machine learning. The fifth sentence continues that new topic.
+
+A semantic chunker therefore has evidence for a boundary between the third and fourth sentences.
+
+## 4.1 Embedding-Based Boundary Detection
+
+An embedding model converts each sentence into a numerical vector. Semantically similar sentences tend to have nearby representations in the embedding space.
+
+Suppose the semantic differences between consecutive sentences are represented conceptually as:
+
+Sentence 1 -> Sentence 2: 0.09
+
+Sentence 2 -> Sentence 3: 0.12
+
+Sentence 3 -> Sentence 4: 0.71
+
+Sentence 4 -> Sentence 5: 0.10
+
+The large difference between Sentence 3 and Sentence 4 suggests a semantic transition.
+
+The embedding model itself does not decide that a chunk should end. Its role is to represent semantic information. The chunking algorithm analyzes those representations and applies a breakpoint strategy.
+
+One possible strategy is based on the statistical distribution of semantic differences. If a particular difference is unusually large compared with the other differences in the document, it can be treated as a potential boundary.
+
+## 4.2 Gradual Topic Transitions
+
+Not every topic change is abrupt.
+
+Consider:
+
+Vector databases store numerical representations of documents.
+
+These representations allow systems to perform similarity search.
+
+Similarity search is particularly useful when the wording of a query differs from the wording used in the source document.
+
+Retrieval systems often combine vector search with keyword-based techniques.
+
+Keyword-based retrieval becomes especially useful when queries contain exact identifiers, error codes, or technical names.
+
+The topic gradually moves from embeddings to hybrid retrieval. There may not be a single obvious sentence where the topic changes completely.
+
+This is one reason semantic chunking is more interesting than simply detecting headings. A document may contain conceptual transitions that are not represented explicitly by formatting.
+
+---
+
+# 5. Chunk Size and Context
+
+Chunk size influences retrieval quality.
+
+If chunks are extremely small, the retriever may return passages that lack enough context to answer a question. If chunks are extremely large, each retrieved passage may contain multiple unrelated concepts, reducing retrieval precision and increasing the amount of context sent to the language model.
+
+Consider the sentence:
+
+The HNSW algorithm creates a graph structure for approximate nearest-neighbor search.
+
+If this sentence is isolated from the preceding explanation of vector databases, it may be difficult for a reader to understand why HNSW is being discussed.
+
+A better chunk might contain the definition of vector search, the motivation for approximate nearest-neighbor indexing, and the introduction of HNSW.
+
+At the same time, adding several unrelated paragraphs about database transactions would make the chunk less focused.
+
+The ideal chunk therefore represents a balance between completeness and semantic concentration.
+
+## 5.1 Chunk Overlap
+
+Overlap is often introduced to preserve context across boundaries.
+
+For example, if one chunk ends with:
+
+The reranker compares each candidate with the original query.
+
+and the next chunk begins with:
+
+This additional comparison is more expensive than initial vector retrieval.
+
+the relationship between the two sentences may be useful.
+
+Overlap can reduce the risk of losing such context, but excessive overlap creates duplicate information in the retrieval index. It also increases storage requirements, embedding computation, and the amount of text that may be retrieved repeatedly.
+
+For character-based chunkers, a common starting point is an overlap representing a fraction of the chunk size. Semantic chunkers require more careful consideration because their boundaries are determined by meaning rather than fixed character positions.
+
+---
+
+# 6. Embeddings
+
+Once chunks have been created, each chunk can be converted into an embedding vector.
+
+An embedding is a numerical representation of text designed so that semantic relationships can be captured geometrically. Texts discussing related concepts should generally have representations that are closer together than unrelated texts.
+
+For example, the following passages are likely to be semantically related:
+
+"Vector databases store embeddings and support similarity search."
+
+"An ANN index allows a system to find vectors that are close to a query representation."
+
+By contrast, the following sentence discusses a different domain:
+
+"The cardiac monitoring device records the patient's heart rate during the procedure."
+
+The embedding model is therefore an important part of the retrieval system.
+
+However, embeddings do not replace chunking. A highly capable embedding model cannot completely compensate for a poorly constructed chunk. If a single chunk contains several unrelated topics, its embedding may represent a mixture of those topics, making retrieval less precise.
+
+---
+
+# 7. Vector Databases
+
+After generating embeddings, the system needs to store them in a structure that supports efficient retrieval.
+
+A vector database stores vectors along with associated metadata and document content. The metadata may include document identifiers, page numbers, section titles, source URLs, timestamps, or access-control information.
+
+Suppose a knowledge base contains one million chunks. Comparing a query vector against every stored vector may become computationally expensive. Approximate nearest-neighbor indexes can significantly reduce search time.
+
+One popular family of approaches is Hierarchical Navigable Small World graphs, commonly known as HNSW.
+
+HNSW organizes vectors into a navigable graph. During search, the algorithm explores promising regions of the graph rather than comparing the query against every vector.
+
+The advantage is speed. The trade-off is that approximate search may sacrifice a small amount of exact recall depending on the index configuration.
+
+## 7.1 Metadata Filtering
+
+Vector similarity is not always enough.
+
+Suppose a company stores documents from three departments: Finance, Engineering, and Human Resources.
+
+A user asks about an eng

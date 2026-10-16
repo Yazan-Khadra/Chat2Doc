@@ -2,6 +2,7 @@ from ..llm_factory import LLMInterface
 from openai import OpenAI
 import logging
 from typing import Optional
+from models import OPENAIENUMS
 
 
 class OpenAIProvider(LLMInterface):
@@ -35,7 +36,7 @@ class OpenAIProvider(LLMInterface):
 
         
 
-    def embed_text(self, text: str, document_type: str):
+    def embed_text(self, text: str, document_type: Optional[str] = None):
         if not self.client:
 
             self.logger.error("OpenAI client was not set")
@@ -67,12 +68,34 @@ class OpenAIProvider(LLMInterface):
         max_output_tokens = max_output_tokens if max_output_tokens else self.deafult_generation_max_output_tokens
         temperature = temperature if temperature else self.deafult_temperature
 
+        chat_history.append(
+            self.construct_prompt(prompt=prompt , role=OPENAIENUMS.USER.value)
+        )
+
+        response = self.client.chat.completions.create(
+            model=self.generation_model_id,
+            messages=chat_history,
+            max_tokens=max_output_tokens,
+            temperature=temperature
+        )
+
+        if not response or not response.choices or len(response.choices) ==0 or not response.choices[0].message:
+
+            self.logger.error("Error while generation text with OpenAI")
+
+        return response.choices[0].message.content
+
 
     def construct_prompt(self, prompt: str, role: str):
         return {
             "role":role,
-            "content":prompt
+            "content":self.process_text(prompt)
         }
+    def process_text(self , text:str):
+
+        return text[:self.deafult_input_max_characters].strip()
+    
+    
 
 
 
